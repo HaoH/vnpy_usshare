@@ -1,6 +1,7 @@
 from datetime import timedelta, datetime, date, time
 from zoneinfo import ZoneInfo
 
+from pandas import Timestamp
 from pytz import timezone
 from typing import Dict, List, Optional
 from copy import deepcopy
@@ -25,7 +26,9 @@ INTERVAL_VT2TS = {
 
 # 股票支持列表
 STOCK_LIST = [
-    Exchange.SEHK
+    Exchange.NYSE,
+    Exchange.NASDAQ,
+    Exchange.AMEX
 ]
 
 # 期货支持列表
@@ -34,9 +37,9 @@ FUTURE_LIST = [
 
 # 交易所映射
 EXCHANGE_VT2TS = {
-    Exchange.SEHK: "HK",
-    Exchange.SSE: "SH",
-    Exchange.SZSE: "SZ",
+    Exchange.NYSE: "NYSE",
+    Exchange.NASDAQ: "NASDAQ",
+    Exchange.AMEX: "AMEX"
 }
 
 # 时间调整映射
@@ -48,8 +51,7 @@ INTERVAL_ADJUSTMENT_MAP = {
 }
 
 # 中国上海时区
-CHINA_TZ = timezone("Asia/Shanghai")
-DB_TZ = ZoneInfo(SETTINGS["database.timezone"])
+CHINA_TZ = ZoneInfo("Asia/Shanghai")
 
 
 func_price_map = {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': lambda x: x.sum(min_count=1)}
@@ -124,8 +126,6 @@ class UsshareDatafeed(BaseDatafeed):
         if not ts_interval:
             return None
 
-        adjustment = INTERVAL_ADJUSTMENT_MAP[interval]
-
         try:
             df = web.DataReader(ak_symbol, 'yahoo', start=start, end=end)
         except IOError:
@@ -135,62 +135,47 @@ class UsshareDatafeed(BaseDatafeed):
         df.fillna(0, inplace=True)
 
         data: List[BarData] = []
-        if df is not None:
-            if interval.value in ["d"]:
-                return self.handle_bar_data(df, symbol, exchange, interval, start, end)
-            elif interval.value in ['w']:
-                df.index = pd.DatetimeIndex(pd.to_datetime(df['date']))
-                w_df = df.resample('W').agg(func_price_map).dropna()
-                w_df.index = w_df.index + to_offset("-2D")
-                dt = w_df.index.to_pydatetime()
-                w_df["date"] = [x.date() for x in dt]
-                return self.handle_bar_data(w_df, symbol, exchange, interval, start, end)
-
+        if df is not None and interval.value in ["d", "w"]:
+            data = self.handle_bar_data(df, symbol, exchange, interval)
         return data
 
-    def handle_bar_data(self, df, symbol, exchange, interval, start, end):
-        bar_keys: List[datetime] = []
+    def handle_bar_data(self, df, symbol, exchange, interval):
         bar_dict: Dict[datetime, BarData] = {}
         data: List[BarData] = []
 
-        df['date'] = df.index.date
+        adjustment = INTERVAL_ADJUSTMENT_MAP[interval]
 
-        for ix, row in df.iterrows():
-            if row["Open"] is None:
+        for row in df.itertuples():
+            dt: datetime = None
+            if type(row.Index) == Timestamp:
+                dt = row.Index.to_pydatetime() - adjustment
+            elif type(row.Index) == date:
+                dt = row.Index - adjustment
+                dt = datetime.combine(dt, datetime.min.time())
+            elif type(row.Index) == str:
+                dt = datetime.strptime(row.Index, "%Y-%m-%d")
+
+            if dt is None:
                 continue
 
-            dt = row["date"]
-            if type(dt) == str:
-                dt = datetime.strptime(dt, "%Y-%m-%d").astimezone(DB_TZ)
-            elif type(dt) == date:
-                dt = datetime.combine(dt, time(0,0)).astimezone(DB_TZ)
-            # dt = datetime.strptime(dt, "%Y-%m-%d")
-            # dt = CHINA_TZ.localize(dt)
+            dt = dt.replace(tzinfo=CHINA_TZ)
 
-            if dt < start or dt > end:
-                continue
-
-            turnover = row.get("amount", 0)
-            if turnover is None:
-                turnover = 0
-
-            open_interest = row.get("oi", 0)
-            if open_interest is None:
-                open_interest = 0
+            turnover = 0
+            open_interest = 0
 
             bar: BarData = BarData(
                 symbol=symbol,
                 exchange=exchange,
                 interval=interval,
                 datetime=dt,
-                open_price=round_to(row["Open"], 0.000001),
-                high_price=round_to(row["High"], 0.000001),
-                low_price=round_to(row["Low"], 0.000001),
-                close_price=round_to(row["Close"], 0.000001),
-                volume=row["Volume"],
+                open_price=round_to(row.Open, 0.000001),
+                high_price=round_to(row.High, 0.000001),
+                low_price=round_to(row.Low, 0.000001),
+                close_price=round_to(row.Close, 0.000001),
+                volume=row.Volume,
                 turnover=turnover,
                 open_interest=open_interest,
-                gateway_name="AK"
+                gateway_name="US"
             )
 
             bar_dict[dt] = bar
