@@ -133,13 +133,14 @@ class UsshareDatafeed(BaseDatafeed):
 
         # 处理原始数据中的NaN值
         df.fillna(0, inplace=True)
+        df.rename(columns={'Open': 'open', 'High': 'high', 'Close': 'close', 'Low': 'low', 'Volume': 'volume'}, inplace=True)
 
         data: List[BarData] = []
         if df is not None and interval.value in ["d", "w"]:
             data = self.handle_bar_data(df, symbol, exchange, interval)
         return data
 
-    def handle_bar_data(self, df, symbol, exchange, interval):
+    def handle_bar_data(self, df, symbol, exchange, interval, start=None, end=None):
         bar_dict: Dict[datetime, BarData] = {}
         data: List[BarData] = []
 
@@ -168,11 +169,11 @@ class UsshareDatafeed(BaseDatafeed):
                 exchange=exchange,
                 interval=interval,
                 datetime=dt,
-                open_price=round_to(row.Open, 0.000001),
-                high_price=round_to(row.High, 0.000001),
-                low_price=round_to(row.Low, 0.000001),
-                close_price=round_to(row.Close, 0.000001),
-                volume=row.Volume,
+                open_price=round_to(row.open, 0.000001),
+                high_price=round_to(row.high, 0.000001),
+                low_price=round_to(row.low, 0.000001),
+                close_price=round_to(row.close, 0.000001),
+                volume=row.volume,
                 turnover=turnover,
                 open_interest=open_interest,
                 gateway_name="US"
