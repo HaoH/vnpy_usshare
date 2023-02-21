@@ -3,12 +3,13 @@ from zoneinfo import ZoneInfo
 
 from pandas import Timestamp
 from pytz import timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 from copy import deepcopy
 
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
-import pandas_datareader.data as web
+from pandas_datareader import data as pdr
+import yfinance as yf
 
 from vnpy.trader.setting import SETTINGS
 from vnpy.trader.datafeed import BaseDatafeed
@@ -96,7 +97,7 @@ class UsshareDatafeed(BaseDatafeed):
 
         self.inited: bool = False
 
-    def init(self) -> bool:
+    def init(self, output: Callable = print) -> bool:
         """初始化"""
         if self.inited:
             return True
@@ -104,13 +105,14 @@ class UsshareDatafeed(BaseDatafeed):
         # ak.set_token(self.password)
         # self.pro = ak.pro_api()
         self.inited = True
+        yf.pdr_override() # <== that's all it takes :-)
 
         return True
 
-    def query_bar_history(self, req: HistoryRequest) -> Optional[List[BarData]]:
+    def query_bar_history(self, req: HistoryRequest, output: Callable = print) -> Optional[List[BarData]]:
         """查询k线数据"""
         if not self.inited:
-            self.init()
+            self.init(output)
 
         symbol = req.symbol
         exchange = req.exchange
@@ -127,8 +129,11 @@ class UsshareDatafeed(BaseDatafeed):
             return None
 
         try:
-            df = web.DataReader(ak_symbol, 'yahoo', start=start, end=end)
+            # download dataframe
+            df = pdr.get_data_yahoo(ak_symbol, start=start, end=end)
+            # df = web.DataReader(ak_symbol, 'yahoo', start=start, end=end)
         except IOError:
+            output("DataReader error!")
             return []
 
         # 处理原始数据中的NaN值
